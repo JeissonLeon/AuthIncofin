@@ -1,9 +1,15 @@
 package com.example.incofinaut.IncofinCrearTest;
 
-import com.example.incofinaut.DBQuery.ListasElementos;
+
+import com.example.incofinaut.DBQuery.ConsultarConstantes;
 import com.example.incofinaut.DriverManager.DriverManager;
+import com.example.incofinaut.Global.Constantes;
+
+import com.example.incofinaut.Modelos.ConstanteSistema;
 import com.example.incofinaut.Modelos.ElementoLista;
 import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 import org.openqa.selenium.By;
 import org.openqa.selenium.Keys;
 import org.openqa.selenium.WebDriver;
@@ -22,17 +28,17 @@ import java.util.NoSuchElementException;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
+
 
 @Service
 public class CrearProductor {
-    String CELULAR_FIJO = "3168215154";
-    String CORREO_FIJO = "jeisson.leon@hexasolultions.co";
     WebDriver driver;
     WebDriverWait wait;
     private static final Logger logger = Logger.getLogger(CrearProductor.class.getName());
 
     @Autowired
-    private ListasElementos listasElementos; // sin new
+    private ConsultarConstantes conConst;
 
     public void setUp() {
         driver = DriverManager.getDriver();
@@ -40,14 +46,15 @@ public class CrearProductor {
         logger.info("✅ Set Up iniciado");
     }
 
+
     public void LoginTest() {
         try {
             // ================== LOGIN ==================
-            driver.get("https://front.incofin.hexasolutions.co/login");
+            driver.get(Constantes.BaseUrl + "/login");
             logger.info("🔵 Navegando a login incofin");
 
-            driver.findElement(By.id("username")).sendKeys("administrador.sistema");
-            driver.findElement(By.xpath("//input[@placeholder='Contraseña']")).sendKeys("12344321");
+            driver.findElement(By.id("username")).sendKeys(Constantes.User);
+            driver.findElement(By.xpath("//input[@placeholder='Contraseña']")).sendKeys(Constantes.Password);
             logger.info("🟢 Documento y contraseña ingresados");
 
             driver.findElement(By.xpath("//button[.//span[text()='Ingresar']]")).click();
@@ -57,10 +64,22 @@ public class CrearProductor {
             logger.info("🟢 Dashboard cargado");
 
             // ================== FORMULARIO ==================
-            driver.get("https://front.incofin.hexasolutions.co/auth/productores/crear");
+            driver.get(Constantes.BaseUrl + "/auth/productores/crear");
             logger.info("🟢 Ingresando a crear productores");
 
             wait.until(ExpectedConditions.presenceOfElementLocated(By.tagName("form")));
+
+            ConstanteSistema conSis = conConst.obtenerConstante("STRMAP");
+            if (conSis.getIndicadorHabilitado()) {
+                List<WebElement> mapa = driver.findElements(By.tagName("app-mapa"));
+                if (!mapa.isEmpty()) {
+                    logger.info("✅ Constante STRMAP habilitada, mapa renderizado");
+                } else {
+                    logger.warning("⚠️ Constante STRMAP habilitada, pero mapa NO renderizado");
+                }
+            } else {
+                logger.info("Constante STRMAP inhabilitada, mapa no renderizado");
+            }
 
             // ================== DROPDOWNS ==================
             List<WebElement> dropdowns = driver.findElements(
@@ -115,8 +134,10 @@ public class CrearProductor {
             }
 
             // ================== AUTOCOMPLETE LUGARES ==================
-            llenarAutocomplete("idLugarExpedicion", valores.get("lugarExpedicion"));
-            llenarAutocomplete("idLugarNacimiento", valores.get("lugarNacimiento"));
+            llenarAutocompletePorLabel("Lugar de expedición", "florid", "Floridablanca");
+            llenarAutocompletePorLabel("Lugar de nacimiento", "bog", "Bogotá");
+
+            llenarDireccion();
 
         } catch (Exception e) {
             logger.log(Level.SEVERE, "❌ Excepción en LoginTest: " + e.getMessage(), e);
@@ -143,24 +164,40 @@ public class CrearProductor {
     }
 
     public String seleccionarOpcionAleatoria(WebDriver driver, WebDriverWait wait, String dropdownId) {
-        WebElement select = wait.until(ExpectedConditions
-                .elementToBeClickable(By.xpath("//div[@id='" + dropdownId + "']")));
-        select.click();
+        try {
+            WebElement select = wait.until(ExpectedConditions
+                    .elementToBeClickable(By.xpath("//div[@id='" + dropdownId + "']")));
+            select.click();
 
-        List<WebElement> opciones = wait.until(ExpectedConditions
-                .presenceOfAllElementsLocatedBy(By.cssSelector("#" + dropdownId + "_list li[role='option']")));
+            By opcionesLocator = By.cssSelector("#" + dropdownId + "_list li[role='option']");
 
-        if (opciones.isEmpty()) {
-            throw new RuntimeException("No se encontraron opciones en el dropdown: " + dropdownId);
+            // 🔄 Intentar hasta 3 veces porque puede tardar en poblar el listado
+            for (int i = 0; i < 3; i++) {
+                List<WebElement> opciones = wait.until(ExpectedConditions.presenceOfAllElementsLocatedBy(opcionesLocator));
+
+                // Filtrar opciones válidas (a veces aparece "Sin resultados" como opción)
+                List<WebElement> opcionesValidas = opciones.stream()
+                        .filter(o -> !o.getText().trim().equalsIgnoreCase("Sin resultados"))
+                        .toList();
+
+                if (!opcionesValidas.isEmpty()) {
+                    int randomIndex = ThreadLocalRandom.current().nextInt(opcionesValidas.size());
+                    WebElement opcionAleatoria = opcionesValidas.get(randomIndex);
+
+                    String textoSeleccionado = opcionAleatoria.getText().trim();
+                    opcionAleatoria.click();
+                    return textoSeleccionado;
+                }
+
+                logger.info("⌛ Esperando que se carguen opciones en [" + dropdownId + "] intento " + (i + 1));
+                Thread.sleep(1000); // pequeña espera antes de reintentar
+                select.click(); // volver a abrir el dropdown
+            }
+
+            throw new RuntimeException("No se encontraron opciones válidas en el dropdown: " + dropdownId);
+        } catch (Exception e) {
+            throw new RuntimeException("Error seleccionando aleatorio en [" + dropdownId + "]: " + e.getMessage(), e);
         }
-
-        int randomIndex = ThreadLocalRandom.current().nextInt(opciones.size());
-        WebElement opcionAleatoria = opciones.get(randomIndex);
-
-        String textoSeleccionado = opcionAleatoria.getText().trim();
-        opcionAleatoria.click();
-
-        return textoSeleccionado;
     }
 
     // ---------- Utilidades de fechas ----------
@@ -196,8 +233,8 @@ public class CrearProductor {
         valores.put("numeroDocumento", String.valueOf(ThreadLocalRandom.current().nextInt(10000000, 99999999)));
 
         // contacto fijo
-        valores.put("numeroCelular", CELULAR_FIJO);
-        valores.put("correoElectronico", CORREO_FIJO);
+        valores.put("numeroCelular", Constantes.Celular);
+        valores.put("correoElectronico", Constantes.Correo);
 
         // montos económicos
         valores.put("valorActivos", String.valueOf(ThreadLocalRandom.current().nextInt(10_000_000, 200_000_000)));
@@ -209,5 +246,168 @@ public class CrearProductor {
     private String randomDeLista(List<String> opciones) {
         return opciones.get(ThreadLocalRandom.current().nextInt(opciones.size()));
     }
+
+    public void llenarAutocompletePorLabel(String labelTexto, String valor, String opcionEsperada) {
+        try {
+            // 1. Localizar el label que corresponde al campo
+            WebElement label = driver.findElement(By.xpath("//label[contains(text(),'" + labelTexto + "')]"));
+
+            // 2. Desde el label, buscar el input dentro del mismo contenedor
+            WebElement input = label.findElement(By.xpath("following::input[@type='text'][1]"));
+
+            input.clear();
+            input.sendKeys(valor);
+
+            // 3. Esperar a que aparezca la lista desplegable
+            By opcionesLocator = By.cssSelector("ul.p-autocomplete-items li[role='option']");
+            wait.until(ExpectedConditions.visibilityOfElementLocated(opcionesLocator));
+
+            List<WebElement> opciones = driver.findElements(opcionesLocator);
+
+            if (opciones.isEmpty()) {
+                throw new RuntimeException("❌ No se encontraron opciones para [" + labelTexto + "]");
+            }
+
+            // 4. Buscar la opción esperada (o la primera si no hay coincidencia)
+            WebElement opcion = opciones.stream()
+                    .filter(o -> o.getText().toLowerCase().contains(opcionEsperada.toLowerCase()))
+                    .findFirst()
+                    .orElse(opciones.get(0));
+
+            opcion.click();
+
+            logger.info("📍 Autocomplete [" + labelTexto + "] → Seleccionado: " + opcion.getText());
+
+        } catch (Exception e) {
+            logger.warning("⚠️ Error en autocomplete [" + labelTexto + "]: " + e.getMessage());
+        }
+    }
+
+    public void seleccionarOpcionPorTexto(String formControlName, String texto) {
+        try {
+            // 1. Abrir el dropdown
+            WebElement dropdown = wait.until(ExpectedConditions
+                    .elementToBeClickable(By.xpath("//p-dropdown[@formcontrolname='" + formControlName + "']//div[contains(@class,'p-dropdown')]")));
+            dropdown.click();
+
+            // 2. Esperar opciones visibles
+            WebElement opcion = wait.until(ExpectedConditions
+                    .visibilityOfElementLocated(By.xpath("//li[@role='option' and normalize-space()='" + texto + "']")));
+
+            // 3. Seleccionar
+            opcion.click();
+            logger.info("✅ Seleccionado en [" + formControlName + "]: " + texto);
+
+        } catch (Exception e) {
+            logger.warning("⚠️ No se pudo seleccionar [" + texto + "] en dropdown " + formControlName + ": " + e.getMessage());
+        }
+    }
+
+
+    public String seleccionarOpcionAleatoria(String formControlName) {
+        try {
+            WebElement dropdown = wait.until(ExpectedConditions
+                    .elementToBeClickable(By.xpath("//p-dropdown[@formcontrolname='" + formControlName + "']//div[contains(@class,'p-dropdown')]")));
+            dropdown.click();
+
+            List<WebElement> opciones = wait.until(ExpectedConditions
+                    .visibilityOfAllElementsLocatedBy(By.xpath("//li[@role='option']")));
+
+            List<WebElement> opcionesValidas = opciones.stream()
+                    .filter(op -> !op.getText().trim().isEmpty() && !op.getText().contains("Seleccione"))
+                    .toList();
+
+            WebElement opcionElegida = opcionesValidas.get(ThreadLocalRandom.current().nextInt(opcionesValidas.size()));
+            String texto = opcionElegida.getText();
+
+            opcionElegida.click();
+            logger.info("✅ Seleccionado en [" + formControlName + "]: " + texto);
+            return texto;
+
+        } catch (Exception e) {
+            logger.warning("⚠️ No se pudo seleccionar opción en dropdown " + formControlName + ": " + e.getMessage());
+            return null;
+        }
+    }
+
+    public String seleccionarOpcionAleatoriaConCarga(String formControlName) {
+        try {
+            // 1. Abrir el dropdown
+            WebElement dropdown = wait.until(ExpectedConditions
+                    .elementToBeClickable(By.xpath("//p-dropdown[@formcontrolname='" + formControlName + "']//div[contains(@class,'p-dropdown')]")));
+            dropdown.click();
+
+            // 2. Esperar hasta que haya opciones > 1 y que no todas sean "Sin resultados"
+            wait.until(driver -> {
+                List<WebElement> ops = driver.findElements(By.xpath("//li[@role='option']"));
+                return ops.size() > 1 || (ops.size() == 1 && !ops.get(0).getText().contains("Sin resultados"));
+            });
+
+            // 3. Volver a leer las opciones
+            List<WebElement> opciones = driver.findElements(By.xpath("//li[@role='option']"));
+
+            List<WebElement> opcionesValidas = opciones.stream()
+                    .filter(op -> !op.getText().trim().isEmpty()
+                            && !op.getText().contains("Seleccione")
+                            && !op.getText().contains("Sin resultados"))
+                    .toList();
+
+            if (opcionesValidas.isEmpty()) {
+                logger.warning("⚠️ No hay opciones válidas en " + formControlName);
+                return null;
+            }
+
+            WebElement opcionElegida = opcionesValidas.get(ThreadLocalRandom.current().nextInt(opcionesValidas.size()));
+            String texto = opcionElegida.getText();
+            opcionElegida.click();
+
+            logger.info("✅ Seleccionado en [" + formControlName + "]: " + texto);
+            return texto;
+
+        } catch (Exception e) {
+            logger.warning("⚠️ No se pudo seleccionar opción en dropdown " + formControlName + ": " + e.getMessage());
+            return null;
+        }
+    }
+
+    public void llenarDireccion() {
+        try {
+            // País = Colombia
+            seleccionarOpcionPorTexto("idPais", "Colombia");
+
+            // Departamento = Santander
+            seleccionarOpcionPorTexto("idDepartamento", "Santander");
+
+            // Municipio aleatorio (espera a que cargue bien)
+            String municipio = seleccionarOpcionAleatoriaConCarga("idMunicipio");
+            logger.info("🏙 Municipio elegido: " + municipio);
+
+            // Barrio / vereda aleatorio
+            String barrio = seleccionarOpcionAleatoriaConCarga("idBarriovereda");
+            logger.info("🏘 Barrio elegido: " + barrio);
+
+            // Nomenclatura aleatoria
+            String nomenclatura = seleccionarOpcionAleatoriaConCarga("idListaNomenclatura");
+            logger.info("🚦 Nomenclatura → " + nomenclatura);
+
+            // Estrato aleatorio
+            String estrato = seleccionarOpcionAleatoriaConCarga("idListaEstrato");
+            logger.info("🏠 Estrato → " + estrato);
+
+            // Inputs de dirección
+            driver.findElement(By.id("viaPrincipal"))
+                    .sendKeys(String.valueOf(ThreadLocalRandom.current().nextInt(1, 100)));
+            driver.findElement(By.id("viaSecundaria"))
+                    .sendKeys(String.valueOf(ThreadLocalRandom.current().nextInt(1, 100)));
+            driver.findElement(By.id("complemento"))
+                    .sendKeys(String.valueOf(ThreadLocalRandom.current().nextInt(1, 50)));
+            driver.findElement(By.id("datosComplementarios"))
+                    .sendKeys("Apartamento " + ThreadLocalRandom.current().nextInt(1, 20));
+
+        } catch (Exception e) {
+            logger.warning("⚠️ Error al llenar dirección: " + e.getMessage());
+        }
+    }
+
 
 }

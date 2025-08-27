@@ -3,16 +3,17 @@ package com.example.incofinaut.Modelos;
 import lombok.Getter;
 import lombok.Setter;
 
-public class ElementoLista {
+public class ConstanteSistema {
+
     @Setter
     @Getter
-    private String nombre;
-    @Getter
-    @Setter
-    private int orden;
+    private String Codigo;
     @Setter
     @Getter
-    private String codigo;
+    private String Descripcion;
+    @Setter
+    @Getter
+    private String Valor;
     @Setter
     private int indicadorHabilitado;
 
