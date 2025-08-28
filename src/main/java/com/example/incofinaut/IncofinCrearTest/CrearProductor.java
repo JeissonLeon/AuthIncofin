@@ -2,6 +2,7 @@ package com.example.incofinaut.IncofinCrearTest;
 
 
 import com.example.incofinaut.DBQuery.ConsultarConstantes;
+import com.example.incofinaut.DBQuery.Productor;
 import com.example.incofinaut.DriverManager.DriverManager;
 import com.example.incofinaut.Global.Constantes;
 
@@ -17,14 +18,12 @@ import org.openqa.selenium.WebElement;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.web.servlet.filter.OrderedFormContentFilter;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.NoSuchElementException;
+import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -39,14 +38,22 @@ public class CrearProductor {
 
     @Autowired
     private ConsultarConstantes conConst;
+    @Autowired
+    private OrderedFormContentFilter formContentFilter;
 
+    @Autowired
+    private Productor productorRepo;
+
+    private String numeroDocumentoGenerado;
+
+    @Before
     public void setUp() {
         driver = DriverManager.getDriver();
         wait = DriverManager.getWait();
         logger.info("✅ Set Up iniciado");
     }
 
-
+    @Test
     public void LoginTest() {
         try {
             // ================== LOGIN ==================
@@ -70,15 +77,15 @@ public class CrearProductor {
             wait.until(ExpectedConditions.presenceOfElementLocated(By.tagName("form")));
 
             ConstanteSistema conSis = conConst.obtenerConstante("STRMAP");
-            if (conSis.getIndicadorHabilitado()) {
+            if (conSis.getIndicadorHabilitado() && conSis.getValor().equals("1")) {
                 List<WebElement> mapa = driver.findElements(By.tagName("app-mapa"));
                 if (!mapa.isEmpty()) {
                     logger.info("✅ Constante STRMAP habilitada, mapa renderizado");
                 } else {
-                    logger.warning("⚠️ Constante STRMAP habilitada, pero mapa NO renderizado");
+                    logger.severe("⚠️ Constante STRMAP habilitada, pero mapa NO renderizado");
                 }
             } else {
-                logger.info("Constante STRMAP inhabilitada, mapa no renderizado");
+                logger.info("Constante STRMAP inhabilitada o con valor 0, mapa no renderizado");
             }
 
             // ================== DROPDOWNS ==================
@@ -86,13 +93,31 @@ public class CrearProductor {
                     By.cssSelector("form p-dropdown > div[id].p-dropdown")
             );
 
+            Set<String> idsDependientesDireccion = Set.of(
+                    "idPais", "idDepartamento", "idMunicipio",
+                    "idBarriovereda", "idListaNomenclatura", "idListaEstrato"
+            );
+
             for (WebElement dropdown : dropdowns) {
                 String id = dropdown.getAttribute("id");
                 String clases = dropdown.getAttribute("class");
 
-                if ((clases != null && clases.contains("p-disabled"))) {
+                // Omitir dropdowns deshabilitados
+                if (clases != null && clases.contains("p-disabled")) {
                     logger.info("Dropdown deshabilitado, se omite: " + id);
                     continue;
+                }
+
+                if (id.contains("pn_id")) {
+                    // Obtener el formControlName correcto desde el p-dropdown padre
+                    WebElement pDropdown = dropdown.findElement(By.xpath("ancestor::p-dropdown"));
+                    String formControlName = pDropdown.getAttribute("formcontrolname");
+
+                    // ⚠️ Evitar seleccionar dropdowns dependientes de dirección aquí
+                    if (idsDependientesDireccion.contains(formControlName)) {
+                        logger.info("Dropdown dependiente de dirección, se seleccionará en llenarDireccion(): " + formControlName);
+                        continue;
+                    }
                 }
 
                 try {
@@ -128,6 +153,10 @@ public class CrearProductor {
                     input.clear();
                     input.sendKeys(entry.getValue());
                     logger.info("✍️ Campo [" + entry.getKey() + "] → " + entry.getValue());
+
+                    if (entry.getKey().equals("numeroDocumento")) {
+                        numeroDocumentoGenerado = entry.getValue();
+                    }
                 } catch (NoSuchElementException e) {
                     logger.warning("⚠️ No se encontró el campo con id: " + entry.getKey());
                 }
@@ -135,9 +164,27 @@ public class CrearProductor {
 
             // ================== AUTOCOMPLETE LUGARES ==================
             llenarAutocompletePorLabel("Lugar de expedición", "florid", "Floridablanca");
-            llenarAutocompletePorLabel("Lugar de nacimiento", "bog", "Bogotá");
+            llenarAutocompletePorLabel("Lugar de nacimiento", "florid", "Floridablanca");
 
             llenarDireccion();
+
+            Thread.sleep(5000);
+
+            // ================== GUARDAR PRODUCTOR ==================
+            WebElement btnGuardar = wait.until(ExpectedConditions
+                    .elementToBeClickable(By.xpath("//button[.//span[text()='Guardar']]")));
+            btnGuardar.click();
+            logger.info("💾 Botón 'Guardar' presionado");
+
+            // Esperar confirmación de guardado
+            wait.until(ExpectedConditions.presenceOfElementLocated(
+                    By.xpath("//*[contains(text(),'Registro actualizado correctamente') or contains(text(),'Éxito')]")
+            ));
+            logger.info("✅ Productor guardado exitosamente en UI");
+
+            // ================== ACTIVAR PRODUCTOR EN BD ==================
+            productorRepo.ActivarProductorArtificialmente(numeroDocumentoGenerado);
+            logger.info("Productor activado artificialmente con documento: " + numeroDocumentoGenerado);
 
         } catch (Exception e) {
             logger.log(Level.SEVERE, "❌ Excepción en LoginTest: " + e.getMessage(), e);
@@ -276,12 +323,16 @@ public class CrearProductor {
 
             opcion.click();
 
+            // 5. Esperar hasta que el input refleje la opción seleccionada
+            wait.until(driver -> input.getAttribute("value").equals(opcion.getText().trim()));
+
             logger.info("📍 Autocomplete [" + labelTexto + "] → Seleccionado: " + opcion.getText());
 
         } catch (Exception e) {
             logger.warning("⚠️ Error en autocomplete [" + labelTexto + "]: " + e.getMessage());
         }
     }
+
 
     public void seleccionarOpcionPorTexto(String formControlName, String texto) {
         try {
@@ -304,31 +355,6 @@ public class CrearProductor {
     }
 
 
-    public String seleccionarOpcionAleatoria(String formControlName) {
-        try {
-            WebElement dropdown = wait.until(ExpectedConditions
-                    .elementToBeClickable(By.xpath("//p-dropdown[@formcontrolname='" + formControlName + "']//div[contains(@class,'p-dropdown')]")));
-            dropdown.click();
-
-            List<WebElement> opciones = wait.until(ExpectedConditions
-                    .visibilityOfAllElementsLocatedBy(By.xpath("//li[@role='option']")));
-
-            List<WebElement> opcionesValidas = opciones.stream()
-                    .filter(op -> !op.getText().trim().isEmpty() && !op.getText().contains("Seleccione"))
-                    .toList();
-
-            WebElement opcionElegida = opcionesValidas.get(ThreadLocalRandom.current().nextInt(opcionesValidas.size()));
-            String texto = opcionElegida.getText();
-
-            opcionElegida.click();
-            logger.info("✅ Seleccionado en [" + formControlName + "]: " + texto);
-            return texto;
-
-        } catch (Exception e) {
-            logger.warning("⚠️ No se pudo seleccionar opción en dropdown " + formControlName + ": " + e.getMessage());
-            return null;
-        }
-    }
 
     public String seleccionarOpcionAleatoriaConCarga(String formControlName) {
         try {
@@ -337,10 +363,14 @@ public class CrearProductor {
                     .elementToBeClickable(By.xpath("//p-dropdown[@formcontrolname='" + formControlName + "']//div[contains(@class,'p-dropdown')]")));
             dropdown.click();
 
-            // 2. Esperar hasta que haya opciones > 1 y que no todas sean "Sin resultados"
+            // 2. Esperar hasta que aparezca al menos una opción válida
             wait.until(driver -> {
-                List<WebElement> ops = driver.findElements(By.xpath("//li[@role='option']"));
-                return ops.size() > 1 || (ops.size() == 1 && !ops.get(0).getText().contains("Sin resultados"));
+                List<WebElement> opciones = driver.findElements(By.xpath("//li[@role='option']"));
+                return opciones.stream().anyMatch(op ->
+                        !op.getText().trim().isEmpty()
+                                && !op.getText().contains("Seleccione")
+                                && !op.getText().contains("Sin resultados")
+                );
             });
 
             // 3. Volver a leer las opciones
@@ -357,7 +387,28 @@ public class CrearProductor {
                 return null;
             }
 
-            WebElement opcionElegida = opcionesValidas.get(ThreadLocalRandom.current().nextInt(opcionesValidas.size()));
+            // Selección especial para "idDepartamento"
+            WebElement opcionElegida;
+            switch (formControlName) {
+                case "idDepartamento":
+                    opcionElegida = opcionesValidas.stream()
+                            .filter(op -> op.getText().equalsIgnoreCase("Santander"))
+                            .findFirst()
+                            .orElse(opcionesValidas.get(0)); // fallback: la primera si no está Santander
+                    break;
+
+                case "idMunicipio":
+                    opcionElegida = opcionesValidas.stream()
+                            .filter(op -> op.getText().equalsIgnoreCase("Bucaramanga"))
+                            .findFirst()
+                            .orElse(opcionesValidas.get(0)); // fallback: la primera si no está Santander
+                    break;
+
+                default:
+                    opcionElegida = opcionesValidas.get(ThreadLocalRandom.current().nextInt(opcionesValidas.size()));
+                    break;
+            }
+
             String texto = opcionElegida.getText();
             opcionElegida.click();
 
@@ -372,13 +423,12 @@ public class CrearProductor {
 
     public void llenarDireccion() {
         try {
-            // País = Colombia
+            // País fijo
             seleccionarOpcionPorTexto("idPais", "Colombia");
 
-            // Departamento = Santander
-            seleccionarOpcionPorTexto("idDepartamento", "Santander");
+            String departamento = seleccionarOpcionAleatoriaConCarga("idDepartamento");
+            logger.info("🏙 Departamento elegido: " + departamento);
 
-            // Municipio aleatorio (espera a que cargue bien)
             String municipio = seleccionarOpcionAleatoriaConCarga("idMunicipio");
             logger.info("🏙 Municipio elegido: " + municipio);
 
@@ -395,19 +445,13 @@ public class CrearProductor {
             logger.info("🏠 Estrato → " + estrato);
 
             // Inputs de dirección
-            driver.findElement(By.id("viaPrincipal"))
-                    .sendKeys(String.valueOf(ThreadLocalRandom.current().nextInt(1, 100)));
-            driver.findElement(By.id("viaSecundaria"))
-                    .sendKeys(String.valueOf(ThreadLocalRandom.current().nextInt(1, 100)));
-            driver.findElement(By.id("complemento"))
-                    .sendKeys(String.valueOf(ThreadLocalRandom.current().nextInt(1, 50)));
-            driver.findElement(By.id("datosComplementarios"))
-                    .sendKeys("Apartamento " + ThreadLocalRandom.current().nextInt(1, 20));
+            driver.findElement(By.id("viaPrincipal")).sendKeys(String.valueOf(ThreadLocalRandom.current().nextInt(1, 100)));
+            driver.findElement(By.id("viaSecundaria")).sendKeys(String.valueOf(ThreadLocalRandom.current().nextInt(1, 100)));
+            driver.findElement(By.id("complemento")).sendKeys(String.valueOf(ThreadLocalRandom.current().nextInt(1, 50)));
+            driver.findElement(By.id("datosComplementarios")).sendKeys("Apartamento " + ThreadLocalRandom.current().nextInt(1, 20));
 
         } catch (Exception e) {
             logger.warning("⚠️ Error al llenar dirección: " + e.getMessage());
         }
     }
-
-
 }

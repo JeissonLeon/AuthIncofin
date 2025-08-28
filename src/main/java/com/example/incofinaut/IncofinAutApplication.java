@@ -11,6 +11,9 @@ public class IncofinAutApplication {
     public static void main(String[] args) {
         ConfigurableApplicationContext context =
                 SpringApplication.run(IncofinAutApplication.class, args);
+        CrearProductor crearProductor = context.getBean(CrearProductor.class);
+        crearProductor.setUp();
+        crearProductor.LoginTest();
 
     }
 

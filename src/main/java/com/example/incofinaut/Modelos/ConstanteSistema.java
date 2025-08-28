@@ -18,6 +18,7 @@ public class ConstanteSistema {
     private int indicadorHabilitado;
 
     public boolean getIndicadorHabilitado() {
+        System.out.println(indicadorHabilitado);
         return indicadorHabilitado != 0;
     }
 }
